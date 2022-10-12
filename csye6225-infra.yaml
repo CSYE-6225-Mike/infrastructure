@@ -233,7 +233,7 @@ Outputs:
     Value: !Ref PublicSubnet2
 
   ## Export Public Subnet 3
-  PublicSubnet2:
+  PublicSubnet3:
     Description: Public Subnet 3 ID
     Export:
       Name: !Sub ${AWS::StackName}-PublicSubnet3
