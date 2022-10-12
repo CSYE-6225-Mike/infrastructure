@@ -45,7 +45,7 @@ Parameters:
 
   PublicSubnet3CIDR:
     Default: 10.0.2.0/24
-    Description: Please enter the IP range (CIDR notation) for public subset 1
+    Description: Please enter the IP range (CIDR notation) for public subset 3
     Type: String
 
   PrivateSubnet1CIDR:
@@ -113,6 +113,7 @@ Resources:
           Value: Public Subnet 1
       VpcId: !Ref VPC
 
+  ## Create Public Subnet2
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties: 
@@ -124,6 +125,7 @@ Resources:
           Value: Public Subnet 2
       VpcId: !Ref VPC
 
+  ## Create Public Subnet3
   PublicSubnet3:
     Type: AWS::EC2::Subnet
     Properties: 
@@ -135,6 +137,7 @@ Resources:
           Value: Public Subnet 3
       VpcId: !Ref VPC
 
+  ## Create Public Route Table
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties: 
@@ -143,9 +146,9 @@ Resources:
           Value: Public Route Table
       VpcId: !Ref VPC
 
+  ## Create PublicRoute
   PublicRoute:
     Type: AWS::EC2::Route
-    Properties:
     Properties: 
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
@@ -163,12 +166,13 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet2
 
-  PublicSubnet2RouteTableAssociation:
+  PublicSubnet3RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
 
+  ## Create PrivateSubnet1
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -179,7 +183,8 @@ Resources:
         - Key: Name
           Value: Private Subnet 1
       VpcId: !Ref VPC
-
+  
+  ## Create PrivateSubnet2
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
@@ -191,6 +196,7 @@ Resources:
           Value: Private Subnet 2 
       VpcId: !Ref VPC
 
+  ## Create PrivateSubnet3
   PrivateSubnet3:
     Type: AWS::EC2::Subnet
     Properties:
