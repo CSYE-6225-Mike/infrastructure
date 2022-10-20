@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 
-Description: This template creates the VPC with public and private subsets.
+Description: This template creates the VPC with public and private subsets and EC2 instance with security group.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -20,6 +20,13 @@ Metadata:
           - PrivateSubnet1CIDR
           - PrivateSubnet2CIDR
           - PrivateSubnet3CIDR
+      - 
+        Label:  
+          default: "EC2 Parameters"
+        Parameters:
+          - AmazonImageID
+          - InstanceType
+          - KeyName
       - 
         Label:  
           default: "SSH CIDR"
@@ -72,6 +79,32 @@ Parameters:
     MinLength: '9'
     Type: String
 
+  InstanceType:
+    Description: WebApp EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues: [t2.micro]
+
+  EC2InstanceSecurityGroupName:
+    Description: Security Group Name of Application
+    Type: String
+    Default: EC2InstanceSecurityGroup
+
+  KeyName:
+    Description: Name of a EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: aws-01
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair
+
+  AmazonImageID:
+    Description: The ID of Amazon Machine Image(AMI)
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      HVM64: ami-08c40ec9ead489470
 
 Resources:
   ## Create the VPC
@@ -208,6 +241,59 @@ Resources:
           Value: Private Subnet 3
       VpcId: !Ref VPC
 
+  ## Create AWS::EC2::SecurityGroup
+  EC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Allow web application request
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Name
+          Value: EC2 Security Group
+      VpcId: !Ref VPC
+
+
+  ## Create the EC2 instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds: 
+        - !GetAtt EC2InstanceSecurityGroup.GroupId
+      KeyName: !Ref KeyName
+      ImageId: !Ref AmazonImageID
+      BlockDeviceMappings:
+        - DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeType: "gp2"
+            VolumeSize: "50"
+            DeleteOnTermination: "true"
+      Tags:
+        - Key: Name
+          Value: EC2 Mike
+      # UserData:
+      #   Fn::Base64:
+      #     Fn::Sub:
+      #       - |
+      #         #!/bin/bash
+      #         sleep 5
 
 
 Outputs:
@@ -259,3 +345,9 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-PrivateSubnet3
     Value: !Ref PrivateSubnet3
+
+  InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2Instance
+    Value: !Ref EC2Instance
