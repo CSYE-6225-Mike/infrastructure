@@ -24,9 +24,19 @@ Metadata:
         Label:  
           default: "EC2 Parameters"
         Parameters:
-          - AmazonImageID
           - InstanceType
+          - EC2InstanceSecurityGroupName
           - KeyName
+          - AmazonImageID
+
+      - Label:
+          default: "DB and S3 and RDS"
+        Parameters:
+          - DBSecurityGroupName
+          - EnvironmentName
+          - RDSUsername
+          - RDSUserPassword
+
       - 
         Label:  
           default: "SSH CIDR"
@@ -34,41 +44,42 @@ Metadata:
           - SSHLocation
 
 
+
 Parameters:
-  VpcCIDR:
-    Default: 10.0.0.0/16
+  VpcCIDR:  
     Description: Please enter the IP range (CIDR notation) for this VPC
     Type: String
+    Default: 10.0.0.0/16
 
   PublicSubnet1CIDR:
-    Default: 10.0.0.0/24
     Description: Please enter the IP range (CIDR notation) for public subset 1
-    Type: String  
+    Type: String
+    Default: 10.0.0.0/24
 
   PublicSubnet2CIDR:
-    Default: 10.0.1.0/24
     Description: Please enter the IP range (CIDR notation) for public subset 2
     Type: String
+    Default: 10.0.1.0/24
 
   PublicSubnet3CIDR:
-    Default: 10.0.2.0/24
     Description: Please enter the IP range (CIDR notation) for public subset 3
     Type: String
+    Default: 10.0.2.0/24
 
   PrivateSubnet1CIDR:
-    Default: 10.0.3.0/24
     Description: Please enter the IP range (CIDR notation) for private subset 1
     Type: String
+    Default: 10.0.3.0/24
 
   PrivateSubnet2CIDR:
-    Default: 10.0.4.0/24
     Description: Please enter the IP range (CIDR notation) for private subset 2
     Type: String 
+    Default: 10.0.4.0/24
 
   PrivateSubnet3CIDR:
-    Default: 10.0.5.0/24
     Description: Please enter the IP range (CIDR notation) for private subset 3
     Type: String
+    Default: 10.0.5.0/24
 
   SSHLocation:
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
@@ -88,7 +99,7 @@ Parameters:
   EC2InstanceSecurityGroupName:
     Description: Security Group Name of Application
     Type: String
-    Default: EC2InstanceSecurityGroup
+    Default: application
 
   KeyName:
     Description: Name of a EC2 KeyPair to enable SSH access to the instance
@@ -98,13 +109,39 @@ Parameters:
 
   AmazonImageID:
     Description: The ID of Amazon Machine Image(AMI)
-    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+    Type: String
+    Default: "ami-0e5d6d444cf8e839f"
 
-Mappings:
-  RegionMap:
-    us-east-1:
-      HVM64: ami-08c40ec9ead489470
+  DBSecurityGroupName:
+    Description: Security Group Name of the DB
+    Type: String
+    Default: database
+
+  EnvironmentName:
+    Description: Environment name for S3 bucket
+    Type: String
+
+  RDSUsername:
+    Description: RDS Master Username
+    Type: String
+    Default: "csye6225"
+  
+  RDSUserPassword:
+    Description: RDS Master Password
+    Type: String
+    Default: "clB4o0gXZ[*yU.ERVh-b"
+
+  RDSDBName:
+    Description: RDS DB Name
+    Type: String 
+    Default: "csye6225"
+  
+  RDSPort:
+    Description: RDS Port
+    Type: Number
+    Default: 3306
+
+  
 
 Resources:
   ## Create the VPC
@@ -112,8 +149,8 @@ Resources:
     Type: AWS::EC2::VPC
     Properties: 
       CidrBlock: !Ref VpcCIDR
-      EnableDnsHostnames: true
       EnableDnsSupport: true
+      EnableDnsHostnames: true
       InstanceTenancy: default
       Tags: 
         - Key: Name
@@ -138,54 +175,93 @@ Resources:
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties: 
+      VpcId: !Ref VPC
       AvailabilityZone: !Select [ 0, !GetAZs '' ]
       CidrBlock: !Ref PublicSubnet1CIDR
       MapPublicIpOnLaunch: true
       Tags: 
         - Key: Name
           Value: Public Subnet 1
-      VpcId: !Ref VPC
+      
 
   ## Create Public Subnet2
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties: 
+      VpcId: !Ref VPC
       AvailabilityZone: !Select [ 1, !GetAZs '' ]
       CidrBlock: !Ref PublicSubnet2CIDR
       MapPublicIpOnLaunch: true
       Tags: 
         - Key: Name
           Value: Public Subnet 2
-      VpcId: !Ref VPC
+
 
   ## Create Public Subnet3
   PublicSubnet3:
     Type: AWS::EC2::Subnet
     Properties: 
+      VpcId: !Ref VPC
       AvailabilityZone: !Select [ 2, !GetAZs '' ]
       CidrBlock: !Ref PublicSubnet3CIDR
       MapPublicIpOnLaunch: true
       Tags: 
         - Key: Name
           Value: Public Subnet 3
+
+  ## Create PrivateSubnet1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
       VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: Name
+          Value: Private Subnet 1
+  
+  ## Create PrivateSubnet2
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: Name
+          Value: Private Subnet 2 
+
+  ## Create PrivateSubnet3
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet3CIDR
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: Name
+          Value: Private Subnet 3
 
   ## Create Public Route Table
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties: 
+      VpcId: !Ref VPC
       Tags: 
         - Key: Name
           Value: Public Route Table
-      VpcId: !Ref VPC
 
   ## Create PublicRoute
   PublicRoute:
     Type: AWS::EC2::Route
     Properties: 
+      RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
-      RouteTableId: !Ref PublicRouteTable
+
 
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -205,47 +281,46 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
 
-  ## Create PrivateSubnet1
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      CidrBlock: !Ref PrivateSubnet1CIDR
-      MapPublicIpOnLaunch: false
+  ## Create Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      VpcId: !Ref VPC
       Tags: 
         - Key: Name
-          Value: Private Subnet 1
-      VpcId: !Ref VPC
+          Value: Private Route Table
   
-  ## Create PrivateSubnet2
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Select [ 1, !GetAZs '' ]
-      CidrBlock: !Ref PrivateSubnet2CIDR
-      MapPublicIpOnLaunch: false
-      Tags: 
-        - Key: Name
-          Value: Private Subnet 2 
-      VpcId: !Ref VPC
+  ## Create Private Route
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      RouteTableId: !Ref PrivateRouteTable
 
-  ## Create PrivateSubnet3
-  PrivateSubnet3:
-    Type: AWS::EC2::Subnet
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      AvailabilityZone: !Select [ 2, !GetAZs '' ]
-      CidrBlock: !Ref PrivateSubnet3CIDR
-      MapPublicIpOnLaunch: false
-      Tags: 
-        - Key: Name
-          Value: Private Subnet 3
-      VpcId: !Ref VPC
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet3 
 
   ## Create AWS::EC2::SecurityGroup
   EC2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: 
-      GroupDescription: Allow web application request
+      GroupDescription: Webapp application
+      GroupName: !Ref EC2InstanceSecurityGroupName
+      VpcId: !Ref VPC
       SecurityGroupIngress: 
         - IpProtocol: tcp
           FromPort: 22
@@ -260,14 +335,155 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 8080
-          ToPort: 8080
+          FromPort: 3000
+          ToPort: 3000
           CidrIp: 0.0.0.0/0
       Tags: 
         - Key: Name
           Value: EC2 Security Group
-      VpcId: !Ref VPC
 
+  ## Create the DB Security Group
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DB security group for webapp
+      GroupName: !Ref DBSecurityGroupName
+      VpcId: !Ref VPC
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 3306
+          SourceSecurityGroupId: 
+            - !GetAtt EC2InstanceSecurityGroup.GroupId
+          ToPort: 3306
+      Tags: 
+        - Key: Name
+          Value: DB Security Group
+
+  ## Create S3 Bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties: 
+      BucketName: !Join
+        - "-"
+        - - "csye6225-fall"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - !Ref EnvironmentName
+          - "michael"
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration: 
+        Rules:
+          - Id: MoveFromStandardToStandard_IA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+      Tags: 
+        - Key: Name
+          Value: S3 Bucket
+
+  ## Create RDS Parameter Group
+  RDSParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties: 
+      Description: Using MySQL 8.0 same with local version
+      Family: mysql8.0
+      Tags: 
+        - Key: Name
+          Value: RDS Parameter Group
+
+  ## Create RDS Subnet Group
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+    DBSubnetGroupDescription: description
+    SubnetIds: 
+      - !Ref PrivateSubnet1
+      - !Ref PrivateSubnet2
+      - !Ref PrivateSubnet3
+    Tags: 
+      - Key: Name
+        Value: RDS Subnet Group
+
+  ## Create RDS Instance 
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: csye6225
+      DBName: !Ref RDSDBName
+      DBParameterGroupName: 
+        - !Ref RDSParameterGroup
+      DBSubnetGroupName: 
+        - !Ref RDSSubnetGroup
+      Engine: MySQL
+      EngineVersion: 8.0.30
+      MasterUsername: !Ref RDSUsername
+      MasterUserPassword: !Ref RDSUserPassword
+      MultiAZ: false
+      Port: !Ref RDSPort
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      VPCSecurityGroups: 
+        - !Ref DBSecurityGroup
+      Tags: 
+        - Key: Name
+          Value: RDS Instance
+
+  ## Create IAM Role EC2-CSYE6225 with WebAppS3 policy
+  EC2InstanceIAMRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      RoleName: EC2-CSYE6225
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies: 
+        - PolicyName: WebAppS3
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:aws:s3:::${S3Bucket}
+                  - !Sub arn:aws:s3:::${S3Bucket}/*
+
+  ## Create the IAM Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: EC2 Instance Profile with IAM role EC2-CSYE6225
+      Path: /
+      Roles: 
+       - !Ref EC2InstanceIAMRole
 
   ## Create the EC2 instance
   EC2Instance:
@@ -279,6 +495,7 @@ Resources:
         - !GetAtt EC2InstanceSecurityGroup.GroupId
       KeyName: !Ref KeyName
       ImageId: !Ref AmazonImageID
+      IamInstanceProfile: !Ref EC2InstanceProfile
       BlockDeviceMappings:
         - DeviceName: "/dev/sda1"
           Ebs:
@@ -287,13 +504,31 @@ Resources:
             DeleteOnTermination: "true"
       Tags:
         - Key: Name
-          Value: EC2 Mike
-      # UserData:
-      #   Fn::Base64:
-      #     Fn::Sub:
-      #       - |
-      #         #!/bin/bash
-      #         sleep 5
+          Value: Mike
+      UserData:
+        Fn::Base64: 
+          !Sub - |
+          #!/bin/bash
+          RDS_DB_NAME=${RDSDBName}
+          RDS_PORT=${RDSPort}
+          RDS_USERNAME=${RDSUsername}
+          RDS_PASSWORD=${RDSUserPassword}
+          RDS_HOST=${RDSInstance.Endpoint.Address}
+          BUCKET_NAME=${S3Bucket}
+          AWS_REGION=${AWS::Region}
+          {
+            echo "RDS_DB_NAME=$RDS_DB_NAME"
+            echo "RDS_PORT=$RDS_PORT"
+            echo "RDS_USERNAME=$RDS_USERNAME"
+            echo "RDS_PASSWORD=$RDS_PASSWORD"
+            echo "RDS_HOST=$RDS_HOST"
+            echo "BUCKET_NAME=$BUCKET_NAME"
+            echo "AWS_REGION=$AWS_REGION"
+          } >>/home/ubuntu/.env
+          sudo cp /home/ubuntu/.env /home/ubuntu/webapp/.env
+          cd /home/ubuntu/webapp
+          npm start
+
 
 
 Outputs:
@@ -345,9 +580,61 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-PrivateSubnet3
     Value: !Ref PrivateSubnet3
+  
+  EC2InstanceSecurityGroup:
+    Description: EC2 Instance Security Group of the newly created EC2 instance
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceSecurityGroup
+    Value: !Ref EC2InstanceSecurityGroup
+  
+  DBSecurityGroup:
+    Description: DB Security Group
+    Export:
+      Name: !Sub ${AWS::StackName}-DBSecurityGroup
+    Value: !Ref DBSecurityGroup
+
+  S3Bucket:
+    Description: S3 Bucket
+    Export:
+      Name: !Sub ${AWS::StackName}-S3Bucket
+    Value: !Ref S3Bucket
+
+  RDSParameterGroup:
+    Description: RDS Parameter Group
+    Export:
+      Name: !Sub ${AWS::StackName}-RDSParameterGroup
+    Value: !Ref RDSParameterGroup
+  
+  RDSSubnetGroup:
+    Description: RDS Subnet Group
+    Export:
+      Name: !Sub ${AWS::StackName}-RDSSubnetGroup
+    Value: !Ref RDSSubnetGroup
+
+  RDSInstance:
+    Description: RDS Instance
+    Export:
+      Name: !Sub ${AWS::StackName}-RDSInstance
+    Value: !Ref RDSInstance
+
+  EC2InstanceIAMRole:
+    Description: EC2 Instance IAM Role
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceIAMRole
+    Value: !Ref EC2InstanceIAMRole
+  
+  EC2InstanceProfile:
+    Description: EC2 Instance Profile
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceProfile
+    Value: !Ref EC2InstanceProfile
 
   InstanceId:
     Description: InstanceId of the newly created EC2 instance
     Export:
       Name: !Sub ${AWS::StackName}-EC2Instance
     Value: !Ref EC2Instance
+
+  
+
+  
