@@ -13,3 +13,4 @@
 
 6. For Assignment 5: aws cloudformation create-stack --stack-name testVPC3 --template-body file://csye6225-infra.yaml --profile=mikedemo --region=us-east-1
 
+7. For Assignment 6: aws cloudformation create-stack --stack-name testEC2 --template-body file://csye6225-infra.yaml --capabilities CAPABILITY_NAMED_IAM --profile=mikedemo --region=us-east-1
