@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 
-Description: This template creates the VPC with public and private subsets and EC2 instance with security group.
+Description: This template creates the VPC, Security groups, RDS and EC2 instance.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -37,6 +37,10 @@ Metadata:
           - RDSUsername
           - RDSUserPassword
 
+      - Label:
+          Default: "Route 53 DNS Record"
+        Parameters:
+          - HostedZoneName
       - 
         Label:  
           default: "SSH CIDR"
@@ -110,16 +114,18 @@ Parameters:
   AmazonImageID:
     Description: The ID of Amazon Machine Image(AMI)
     Type: String
-    Default: "ami-0e5d6d444cf8e839f"
+    Default: "ami-04936fb98adf96ab1"
 
   DBSecurityGroupName:
     Description: Security Group Name of the DB
     Type: String
-    Default: database
+    Default: "database"
 
+  ##S3 bucket environment name
   EnvironmentName:
     Description: Environment name for S3 bucket
     Type: String
+    Default: "csye6225"
 
   RDSUsername:
     Description: RDS Master Username
@@ -140,9 +146,13 @@ Parameters:
     Description: RDS Port
     Type: Number
     Default: 3306
+  
+  HostedZoneResourceName:
+    Description: Hosted Zone ID for demo account
+    Type: String
+    Default: "Z07305123NGHHATDW7KUX"
 
   
-
 Resources:
   ## Create the VPC
   VPC: 
@@ -291,10 +301,11 @@ Resources:
           Value: Private Route Table
   
   ## Create Private Route
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties: 
-      RouteTableId: !Ref PrivateRouteTable
+  # PrivateRoute:
+  #   Type: AWS::EC2::Route
+  #   Properties: 
+  #     RouteTableId: !Ref PrivateRouteTable
+  #     DestinationCidrBlock: 10.0.0.0/16
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -346,15 +357,14 @@ Resources:
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: DB security group for webapp
+      GroupDescription: "DB security group for webapp"
       GroupName: !Ref DBSecurityGroupName
       VpcId: !Ref VPC
       SecurityGroupIngress: 
         - IpProtocol: tcp
           FromPort: 3306
-          SourceSecurityGroupId: 
-            - !GetAtt EC2InstanceSecurityGroup.GroupId
           ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2InstanceSecurityGroup
       Tags: 
         - Key: Name
           Value: DB Security Group
@@ -412,27 +422,29 @@ Resources:
   RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties: 
-    DBSubnetGroupDescription: description
-    SubnetIds: 
-      - !Ref PrivateSubnet1
-      - !Ref PrivateSubnet2
-      - !Ref PrivateSubnet3
-    Tags: 
-      - Key: Name
-        Value: RDS Subnet Group
+      DBSubnetGroupDescription: Private Subnet Group for MySQL
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      Tags: 
+        - Key: Name
+          Value: RDS Subnet Group
 
   ## Create RDS Instance 
   RDSInstance:
     Type: AWS::RDS::DBInstance
+    DependsOn:
+      - RDSParameterGroup
+      - RDSSubnetGroup
+      - DBSecurityGroup
     Properties: 
       AllocatedStorage: 20
       DBInstanceClass: db.t3.micro
       DBInstanceIdentifier: csye6225
       DBName: !Ref RDSDBName
-      DBParameterGroupName: 
-        - !Ref RDSParameterGroup
-      DBSubnetGroupName: 
-        - !Ref RDSSubnetGroup
+      DBParameterGroupName: !Ref RDSParameterGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
       Engine: MySQL
       EngineVersion: 8.0.30
       MasterUsername: !Ref RDSUsername
@@ -451,7 +463,7 @@ Resources:
   EC2InstanceIAMRole:
     Type: AWS::IAM::Role
     Properties: 
-      RoleName: EC2-CSYE6225
+      # RoleName: "EC2-CSYE6225"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -480,10 +492,22 @@ Resources:
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties: 
-      InstanceProfileName: EC2 Instance Profile with IAM role EC2-CSYE6225
       Path: /
       Roles: 
        - !Ref EC2InstanceIAMRole
+
+  ## Create the DNS & EC2 Instance A Record
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties: 
+      HostedZoneId: !Ref HostedZoneResourceName
+      Name: prod.mikea1.me
+      Type: A
+      TTL: 900
+      ResourceRecords:
+        - !GetAtt EC2Instance.PublicIp
+
+
 
   ## Create the EC2 instance
   EC2Instance:
@@ -507,7 +531,7 @@ Resources:
           Value: Mike
       UserData:
         Fn::Base64: 
-          !Sub - |
+          !Sub |
           #!/bin/bash
           RDS_DB_NAME=${RDSDBName}
           RDS_PORT=${RDSPort}
@@ -525,6 +549,7 @@ Resources:
             echo "BUCKET_NAME=$BUCKET_NAME"
             echo "AWS_REGION=$AWS_REGION"
           } >>/home/ubuntu/.env
+          mysql -u $RDS_USERNAME -p$RDS_PASSWORD -h $RDS_HOST -e "ALTER USER '$RDS_USERNAME'@'%' REQUIRE SSL;"
           sudo cp /home/ubuntu/.env /home/ubuntu/webapp/.env
           cd /home/ubuntu/webapp
           npm start
@@ -634,6 +659,7 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-EC2Instance
     Value: !Ref EC2Instance
+
 
   
 
