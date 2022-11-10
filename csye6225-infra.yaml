@@ -114,7 +114,7 @@ Parameters:
   AmazonImageID:
     Description: The ID of Amazon Machine Image(AMI)
     Type: String
-    Default: "ami-04936fb98adf96ab1"
+    Default: "ami-0b1af116cf83b5824"
 
   DBSecurityGroupName:
     Description: Security Group Name of the DB
@@ -487,6 +487,8 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::${S3Bucket}
                   - !Sub arn:aws:s3:::${S3Bucket}/*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
 
   ## Create the IAM Profile
   EC2InstanceProfile:
@@ -506,8 +508,6 @@ Resources:
       TTL: 900
       ResourceRecords:
         - !GetAtt EC2Instance.PublicIp
-
-
 
   ## Create the EC2 instance
   EC2Instance:
