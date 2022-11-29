@@ -114,7 +114,7 @@ Parameters:
   AmazonImageID:
     Description: The ID of Amazon Machine Image(AMI)
     Type: String
-    Default: "ami-0e437208cc856ed49"
+    Default: "ami-075d4a456550eec1a"
 
   DBSecurityGroupName:
     Description: Security Group Name of the DB
@@ -469,11 +469,9 @@ Resources:
   asgLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub '${AWS::StackName}-launch-template'
+      LaunchTemplateName: 'asg_launch_config'
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
-        SecurityGroupIds: 
-          - !GetAtt EC2InstanceSecurityGroup.GroupId
         KeyName: !Ref KeyName
         ImageId: !Ref AmazonImageID
         IamInstanceProfile: 
@@ -488,6 +486,12 @@ Resources:
               DeleteOnTermination: "true"
               Encrypted: true
               KmsKeyId: !GetAtt EBSKey.Arn
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            Groups:
+              - !GetAtt EC2InstanceSecurityGroup.GroupId
         UserData:
           Fn::Base64: 
             !Sub |
