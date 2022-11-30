@@ -114,7 +114,7 @@ Parameters:
   AmazonImageID:
     Description: The ID of Amazon Machine Image(AMI)
     Type: String
-    Default: "ami-033da3e4b4635798f"
+    Default: "ami-0e437208cc856ed49"
 
   DBSecurityGroupName:
     Description: Security Group Name of the DB
@@ -147,11 +147,35 @@ Parameters:
     Type: Number
     Default: 3306
   
-  HostedZoneResourceName:
+  HostName:
     Description: Hosted Zone ID for demo account
+    Type: String
+    Default: "prod.mikea1.me"
+  
+  HostID:
+    Description: DNS host ID
     Type: String
     Default: "Z07305123NGHHATDW7KUX"
 
+  DynamoDBTableOne:
+    Description: User Token Table
+    Type: String
+    Default: "UserTokenTable"
+
+  DynamoDBTableTwo:
+    Description: Email Table
+    Type: String
+    Default: "EmailTable"
+
+  LoadBalancerSecurityGroupName:
+    Description: Load Balancer Security Group Name
+    Type: String
+    Default: "LoadBalancer"
+
+  CertificateARN:
+    Description: Demo Domain SSL Certificate ARN
+    Type: String
+    Default: "arn:aws:acm:us-east-1:428744527365:certificate/79f4e753-a2e3-422c-895c-c6501ede6b58"
   
 Resources:
   ## Create the VPC
@@ -338,17 +362,9 @@ Resources:
           ToPort: 22
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
           FromPort: 3000
           ToPort: 3000
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
       Tags: 
         - Key: Name
           Value: EC2 Security Group
@@ -368,6 +384,220 @@ Resources:
       Tags: 
         - Key: Name
           Value: DB Security Group
+
+  ## Create Load Balancer Security Group
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: This security group is used for load balancer to access the web application.
+      GroupName: !Ref LoadBalancerSecurityGroupName
+      VpcId: !Ref VPC
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Name
+          Value: Load Balancer Security Group
+
+  ## Create the Load Balancer
+  loadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Name: !Sub ${AWS::StackName}-load-balancer
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+      Tags:
+        - Key: Application
+          Value: WebApp
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-load-balancer
+      Type: application
+
+  ## Create the Load Balancer Target Group
+  loadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 90
+      HealthCheckPath: '/healthz'
+      HealthCheckPort: '3000'
+      HealthCheckProtocol: 'HTTP'
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+      IpAddressType: ipv4
+      Name: !Sub ${AWS::StackName}-lb-tg
+      Port: 3000
+      Protocol: 'HTTP'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-lb-tg
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '20'
+      TargetType: instance
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPC
+
+  ## Create the Load Balancer Listener
+  loadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref loadBalancerTargetGroup
+      LoadBalancerArn: !Ref loadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateARN
+
+  ## Create the EC2 Launch Template
+  asgLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-launch-template'
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds: 
+          - !GetAtt EC2InstanceSecurityGroup.GroupId
+        KeyName: !Ref KeyName
+        ImageId: !Ref AmazonImageID
+        IamInstanceProfile: 
+          Arn: !GetAtt 
+            - EC2InstanceProfile
+            - Arn
+        BlockDeviceMappings:
+          - DeviceName: "/dev/sda1"
+            Ebs:
+              VolumeType: "gp3"
+              VolumeSize: "20"
+              DeleteOnTermination: "true"
+              Encrypted: true
+              KmsKeyId: !GetAtt EBSKey.Arn
+        UserData:
+          Fn::Base64: 
+            !Sub |
+            #!/bin/bash
+            RDS_DB_NAME=${RDSDBName}
+            RDS_PORT=${RDSPort}
+            RDS_USERNAME=${RDSUsername}
+            RDS_PASSWORD=${RDSUserPassword}
+            RDS_HOST=${RDSInstance.Endpoint.Address}
+            BUCKET_NAME=${S3Bucket}
+            AWS_REGION=${AWS::Region}
+            SNS_TOPIC=${SNSTopic}
+            DynamoDB_TableOne=${DynamoDBTableOne}
+            {
+              echo "RDS_DB_NAME=$RDS_DB_NAME"
+              echo "RDS_PORT=$RDS_PORT"
+              echo "RDS_USERNAME=$RDS_USERNAME"
+              echo "RDS_PASSWORD=$RDS_PASSWORD"
+              echo "RDS_HOST=$RDS_HOST"
+              echo "BUCKET_NAME=$BUCKET_NAME"
+              echo "AWS_REGION=$AWS_REGION"
+              echo "SNS_TOPIC=$SNS_TOPIC"
+              echo "DynamoDB_TableOne=$DynamoDB_TableOne"
+            } >>/home/ubuntu/.env
+            mysql -u $RDS_USERNAME -p$RDS_PASSWORD -h $RDS_HOST -e "ALTER USER '$RDS_USERNAME'@'%' REQUIRE SSL;"
+            sudo cp /home/ubuntu/.env /home/ubuntu/webapp/.env
+            cd /home/ubuntu/webapp
+            npm start
+
+
+  asgWebApp:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub ${AWS::StackName}-asg
+      AvailabilityZones:
+        - us-east-1a
+        - us-east-1b
+        - us-east-1c
+      Cooldown: '60'
+      DesiredCapacity: '1'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref asgLaunchTemplate
+        Version: !GetAtt asgLaunchTemplate.LatestVersionNumber
+      MaxSize: '3'
+      MinSize: '1'
+      Tags:
+        - Key: Application
+          Value: WebApp
+          PropagateAtLaunch: "true"
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-asg
+          PropagateAtLaunch: "true"
+      TargetGroupARNs:
+        - !Ref loadBalancerTargetGroup
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+
+  ## Create the Scale Up Policy
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref asgWebApp
+      ScalingAdjustment: 1
+
+  ## Create the CloudWatch Alarm 
+  ScaleUpCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale up if average CPU usage is above 5%.
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 5.0
+      AlarmActions:
+        - !Ref ScaleUpPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref asgWebApp
+      ComparisonOperator: GreaterThanThreshold
+  
+  ## Create Scale Down Policy
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref asgWebApp
+      ScalingAdjustment: -1
+
+  ## Create the CloudWatch Alarm 
+  ScaleDownCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale down if average CPU is below 3%.
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 3.0
+      AlarmActions:
+        - !Ref ScaleDownPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref asgWebApp
+      ComparisonOperator: LessThanThreshold
 
   ## Create S3 Bucket
   S3Bucket:
@@ -447,6 +677,7 @@ Resources:
       DBSubnetGroupName: !Ref RDSSubnetGroup
       Engine: MySQL
       EngineVersion: 8.0.30
+      KmsKeyId: !GetAtt RDSKey.Arn
       MasterUsername: !Ref RDSUsername
       MasterUserPassword: !Ref RDSUserPassword
       MultiAZ: false
@@ -502,70 +733,22 @@ Resources:
 
   ## Create the DNS & EC2 Instance A Record
   DNSRecord:
-    Type: AWS::Route53::RecordSet
+    Type: AWS::Route53::RecordSetGroup
     Properties: 
-      HostedZoneId: !Ref HostedZoneResourceName
-      Name: prod.mikea1.me
-      Type: A
-      TTL: 900
-      ResourceRecords:
-        - !GetAtt EC2Instance.PublicIp
-
-  ## Create the EC2 instance
-  EC2Instance:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: !Ref InstanceType
-      SubnetId: !Ref PublicSubnet1
-      SecurityGroupIds: 
-        - !GetAtt EC2InstanceSecurityGroup.GroupId
-      KeyName: !Ref KeyName
-      ImageId: !Ref AmazonImageID
-      IamInstanceProfile: !Ref EC2InstanceProfile
-      BlockDeviceMappings:
-        - DeviceName: "/dev/sda1"
-          Ebs:
-            VolumeType: "gp2"
-            VolumeSize: "50"
-            DeleteOnTermination: "true"
-      Tags:
-        - Key: Name
-          Value: Mike
-      UserData:
-        Fn::Base64: 
-          !Sub |
-          #!/bin/bash
-          RDS_DB_NAME=${RDSDBName}
-          RDS_PORT=${RDSPort}
-          RDS_USERNAME=${RDSUsername}
-          RDS_PASSWORD=${RDSUserPassword}
-          RDS_HOST=${RDSInstance.Endpoint.Address}
-          BUCKET_NAME=${S3Bucket}
-          AWS_REGION=${AWS::Region}
-          SNS_TOPIC=${SNSTopic}
-          DynamoDB_NAME=${DynamoDB}
-          {
-            echo "RDS_DB_NAME=$RDS_DB_NAME"
-            echo "RDS_PORT=$RDS_PORT"
-            echo "RDS_USERNAME=$RDS_USERNAME"
-            echo "RDS_PASSWORD=$RDS_PASSWORD"
-            echo "RDS_HOST=$RDS_HOST"
-            echo "BUCKET_NAME=$BUCKET_NAME"
-            echo "AWS_REGION=$AWS_REGION"
-            echo "SNS_TOPIC=$SNSTopic"
-            echo "DynamoDB_NAME=${DynamoDB}"
-          } >>/home/ubuntu/.env
-          mysql -u $RDS_USERNAME -p$RDS_PASSWORD -h $RDS_HOST -e "ALTER USER '$RDS_USERNAME'@'%' REQUIRE SSL;"
-          sudo cp /home/ubuntu/.env /home/ubuntu/webapp/.env
-          cd /home/ubuntu/webapp
-          npm start
+      HostedZoneId: !Ref HostID
+      RecordSets: 
+        - Name: !Ref HostName
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt loadBalancer.DNSName
+            HostedZoneId: !GetAtt loadBalancer.CanonicalHostedZoneID
 
   ## Create the SNS topic
   SNSTopic:
     Type: AWS::SNS::Topic
     Properties: 
       Subscription: 
-        - Endpoint: !GetAtt LambdaFunction.arn
+        - Endpoint: !GetAtt LambdaFunction.Arn
           Protocol: lambda
       Tags: 
         - Key: name
@@ -599,7 +782,7 @@ Resources:
         - !Ref SNSTopic
 
   ## Create the DynamoDB 
-  DynamoDBTrackUserToken:
+  UserTokenTable:
     Type: AWS::DynamoDB::Table
     Properties: 
       AttributeDefinitions: 
@@ -612,33 +795,28 @@ Resources:
       ProvisionedThroughput: 
         ReadCapacityUnits: 1
         WriteCapacityUnits: 1
-      TableName: !Ref ${AWS::StackName}-DynamoDBTrackUserToken
+      TableName: !Ref DynamoDBTableOne
       Tags: 
         - Key: name
           Value: DynamoDB Track User Token Table
       TimeToLiveSpecification: 
         AttributeName: TTL
-        Enabled: Yes
+        Enabled: true
 
-  ## Create the DynamoDB 
-  DynamoDBTrackUserEmail:
+  EmailTable:
     Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
+    Properties:
+      TableName: !Ref DynamoDBTableTwo
+      BillingMode: PROVISIONED
+      AttributeDefinitions:
         - AttributeName: email
           AttributeType: S
-      BillingMode: PROVISIONED
-      KeySchema: 
+      KeySchema:
         - AttributeName: email
           KeyType: HASH
-      ProvisionedThroughput: 
+      ProvisionedThroughput:
         ReadCapacityUnits: 1
         WriteCapacityUnits: 1
-      TableName: !Ref ${AWS::StackName}-DynamoDBTrackUserEmailTable
-      Tags: 
-        - Key: name
-          Value: DynamoDB Track User Email Table 
-
 
   ## Create Lambda Permission
   SNSPermission:
@@ -646,11 +824,10 @@ Resources:
     DependsOn: LambdaFunction
     Properties: 
       Action: lambda:InvokeFunction
-      FunctionName: !GetAtt function.Arn
+      FunctionName: !Ref LambdaFunction
       Principal: sns.amazonaws.com
       SourceAccount: !Ref 'AWS::AccountId'
-      SourceArn: !GetAtt SNSTopic.Arn
-
+      SourceArn: !Ref SNSTopic
 
   ## Create the IAM role for Lambda function
   LambdaFunctionRole:
@@ -677,122 +854,238 @@ Resources:
   ## Create AWS lambda function
   LambdaFunction:
     Type: AWS::Lambda::Function
-    DependsOn: DynamoDBTrackUserEmail
+    DependsOn: EmailTable
     Properties: 
       Architectures: 
         - x86_64
-      Description: This is a lambda function invoked by SNS message and send a email to verify user. 
-      Environment: 
-          EmailTrackingDynamoDBTable: !Ref DynamoDBTrackUserEmail
-          EmailTrackingDynamoDBRegion: !Ref AWS::Region
-          DomainEnvironment: !Ref EnvironmentName
+      Description: This is a lambda function invoked by SNS message and used to send a email to verify users. 
       FunctionName: "CSYE6225-Fall-Lambda-Function"
       Handler: index.handler
       MemorySize: 128
       PackageType: Zip
       Role: !GetAtt LambdaFunctionRole.Arn
       Runtime: nodejs16.x
-      Tags: 
-        - Key: name
-          Value: Lambda Function
+      Environment:
+        Variables:
+          EmailTrackingDynamoDBTable: !Ref EmailTable
+          EmailTrackingDynamoDBRegion: !Ref AWS::Region
       Timeout: 100
       Code: 
         ZipFile: |
           const AWS = require("aws-sdk");
-          const checkIfEmailSentAlready = async (
-            dynamoDbClient,
-            emailTrackingDynamoDBTable,
-            userEmail
-          ) => {
-            const params = {
-              TableName: emailTrackingDynamoDBTable,
-              Key: {
-                email: userEmail,
-              },
-            };
-            const data = await dynamoDbClient.get(params).promise();
-            console.log("Data:", data);
-            if (data.Item) {
-              return true;
-            } else {
-              return false;
-            }
-          };
-          const logEmailSentToDynamoDB = async (
-            dynamoDbClient,
-            emailTrackingDynamoDBTable,
-            userEmail
-          ) => {
-            const params = {
-              TableName: emailTrackingDynamoDBTable,
-              Item: {
-                email: userEmail,
-              },
-            };
-            const data = await dynamoDbClient.put(params).promise();
-            console.log("Data:", data);
-          };
-          exports.handler = async (event, context, callback) => {
-            console.log("Received event:", JSON.stringify(event, null, 4));
-            const emailTrackingDynamoDBTable = process.env.EmailTrackingDynamoDBTable;
-            const emailTrackingDynamoDBRegion = process.env.EmailTrackingDynamoDBRegion;
-            const domainEnvironment = process.env.DomainEnvironment;
-            // Set the region
-            AWS.config.update({ region: emailTrackingDynamoDBRegion });
-            const dynamoDbClient = new AWS.DynamoDB.DocumentClient({
-              region: emailTrackingDynamoDBRegion,
-            });
-            const message = event.Records[0].Sns.Message;
-            const parsedMessage = JSON.parse(message);
-            const messageType = parsedMessage.message_type;
-            const userToken = parsedMessage.userToken;
-            const userEmail = parsedMessage.username;
-            const first_name = parsedMessage.first_name;
-            const last_name = parsedMessage.last_name;
-            const emailAlreadySent = await checkIfEmailSentAlready(
+          const checkIfEmailSentAlready = async(
               dynamoDbClient,
               emailTrackingDynamoDBTable,
               userEmail
-            );
-            if (!emailAlreadySent) {
-              // Send email using AWS SES
-              console.log("Email is not already sent to the user: " + userEmail + ". Trying to send");
-              const ses = new AWS.SES();
+          ) => {
               const params = {
-                Destination: {
-                  ToAddresses: [userEmail],
-                },
-                Message: {
-                  Body: {
-                    Html: {
-                      Charset: "UTF-8",
-                      Data: `<p>Hello ${first_name} ${last_name},</p>
-                      <p>To verify your email address with prod.mikea1.me, Please click the following link: <a href="https://prod.mikea1.me/v1/verifyUserEmail?email=${userEmail}&token=${userToken}">Verify Email</a> or paste the following link in the browser: https://prod.mikea1.me/v1/verifyUserEmail?email=${userEmail}&token=${userToken}</p>`,
-                    },
+                  TableName: emailTrackingDynamoDBTable,
+                  Key: {
+                      email: userEmail,
                   },
-                  Subject: {
-                    Charset: "UTF-8",
-                    Data: `Verify you user account for $prod.mikea1.me`,
-                  },
-                },
-                Source: `userverification@$prod.mikea1.me`,
               };
-              const data = await ses.sendEmail(params).promise();
-              console.log(data);
-              console.log("Email sent successfully");
-              await logEmailSentToDynamoDB(
-                dynamoDbClient,
-                emailTrackingDynamoDBTable,
-                userEmail
-              );
-              console.log("Email logged to DynamoDB");
-            } else {
-              console.log(
-                "Email already sent to user: " + userEmail + " No need to send again"
-              );
-            }
-            callback(null, "success");
+              const data = await dynamoDbClient.get(params).promise();
+              console.log("Data:", data);
+              if (data.Item) {
+                  return true;
+              } else {
+                  return false;
+              }
           };
+          const logEmailSentToDynamoDB = async(
+              dynamoDbClient,
+              emailTrackingDynamoDBTable,
+              userEmail
+          ) => {
+              const params = {
+                  TableName: emailTrackingDynamoDBTable,
+                  Item: {
+                      email: userEmail,
+                  },
+              };
+              const data = await dynamoDbClient.put(params).promise();
+              console.log("Data:", data);
+          };
+          exports.handler = async(event, context, callback) => {
+              console.log("Received event:", JSON.stringify(event, null, 4));
+              const emailTrackingDynamoDBTable = process.env.EmailTrackingDynamoDBTable;
+              const emailTrackingDynamoDBRegion = process.env.EmailTrackingDynamoDBRegion;
+              // Set the region
+              AWS.config.update({ region: emailTrackingDynamoDBRegion });
+              const dynamoDbClient = new AWS.DynamoDB.DocumentClient({
+                  region: emailTrackingDynamoDBRegion,
+              });
+              const message = event.Records[0].Sns.Message;
+              const parsedMessage = JSON.parse(message);
+              const messageType = parsedMessage.message_type;
+              const userToken = parsedMessage.userToken;
+              const userEmail = parsedMessage.username;
+              const firstname = parsedMessage.firstname;
+              const lastname = parsedMessage.lastname;
+              const emailAlreadySent = await checkIfEmailSentAlready(
+                  dynamoDbClient,
+                  emailTrackingDynamoDBTable,
+                  userEmail
+              );
+              if (!emailAlreadySent) {
+                  // Send email using AWS SES
+                  console.log("Email is not already sent to the user: " + userEmail + ". Trying to send");
+                  const ses = new AWS.SES();
+                  const params = {
+                      Destination: {
+                          ToAddresses: [userEmail],
+                      },
+                      Message: {
+                          Body: {
+                              Html: {
+                                  Charset: "UTF-8",
+                                  Data: `<p>Hello ${firstname} ${lastname},</p>
+                      <p>To verify your email address with prod.mikea1.me, Please click the following link: <a href="https://prod.mikea1.me/v1/verifyUserEmail?email=${userEmail}&userToken=${userToken}">Verify Email</a> or paste the following link in the browser: https://prod.mikea1.me/v1/verifyUserEmail?email=${userEmail}&userToken=${userToken}</p>`,
+                              },
+                          },
+                          Subject: {
+                              Charset: "UTF-8",
+                              Data: `Verify you user account for prod.mikea1.me`,
+                          },
+                      },
+                      Source: `userverification@prod.mikea1.me`,
+                  };
+                  const data = await ses.sendEmail(params).promise();
+                  console.log(data);
+                  console.log("Email sent successfully");
+                  await logEmailSentToDynamoDB(
+                      dynamoDbClient,
+                      emailTrackingDynamoDBTable,
+                      userEmail
+                  );
+                  console.log("Email logged to DynamoDB");
+              } else {
+                  console.log(
+                      "Email already sent to user: " + userEmail + " No need to send again"
+                  );
+              }
+              callback(null, "success");
+          };
+
+  EBSKey:
+    Type: AWS::KMS::Key
+    Properties: 
+      Description: This Customer managed key is used for encrypted EBS volume.
+      EnableKeyRotation: true
+      KeyPolicy: 
+        Version: "2012-10-17"
+        Id: "EBS-key"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join 
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':root'
+            Action: 
+              - "kms:*"
+            Resource: '*'
+          - Sid: "Allow access for Key Administrators"
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':user/mikedemo'
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: "*"
+          - Sid: "Allow use of the key"
+            Effect: Allow
+            Principal:
+              AWS: !Join 
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling'
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+          - Sid: "Allow attachment of persistent resources"
+            Effect: Allow
+            Principal:
+              AWS: !Join 
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling'
+            Action:
+              - kms:CreateGrant
+              - kms:ListGrants
+              - kms:RevokeGrant
+            Resource: '*'
+            Condition: 
+              Bool:
+                kms:GrantIsForAWSResource: true
+
+  EBSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ebsKey
+      TargetKeyId: !Ref EBSKey
+
+  RDSKey:
+    Type: AWS::KMS::Key
+    Properties: 
+      Description: This Customer managed key is used for encrypted RDS volume.
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "RDS-key"      
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join 
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':root'
+            Action: 
+              - "kms:*"
+            Resource: '*'
+          - Sid: "Add service role"
+            Effect: Allow
+            Principal:
+              AWS: !Join 
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS'
+            Action:
+              - "kms:*"
+            Resource: "*"
+
+  RDSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/rdsKey
+      TargetKeyId: !Ref RDSKey
 
 
 Outputs:
@@ -857,6 +1150,42 @@ Outputs:
       Name: !Sub ${AWS::StackName}-DBSecurityGroup
     Value: !Ref DBSecurityGroup
 
+  LoadBalancerSecurityGroup:
+    Description: Load Balancer Security Group
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancerSecurityGroup
+    Value: !Ref LoadBalancerSecurityGroup
+
+  loadBalancer: 
+    Description: Load Balancer
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancer
+    Value: !Ref loadBalancer
+
+  loadBalancerTargetGroup:
+    Description: Load Balancer Target Group
+    Export:
+      Name: !Sub ${AWS::StackName}-loadBalancerTargetGroup
+    Value: !Ref loadBalancerTargetGroup
+
+  loadBalancerListener:
+    Description: Load Balancer Listener
+    Export:
+      Name: !Sub ${AWS::StackName}-LoadBalancerListener
+    Value: !Ref loadBalancerListener
+
+  asgLaunchTemplate:
+    Description: Cloud template
+    Export:
+      Name: !Sub ${AWS::StackName}-asgLaunchTemplate
+    Value: !Ref asgLaunchTemplate
+
+  asgWebApp:
+    Description: Auto Scaling group
+    Export:
+      Name: !Sub ${AWS::StackName}-asgWebApp
+    Value: !Ref asgWebApp
+    
   S3Bucket:
     Description: S3 Bucket
     Export:
@@ -893,13 +1222,56 @@ Outputs:
       Name: !Sub ${AWS::StackName}-EC2InstanceProfile
     Value: !Ref EC2InstanceProfile
 
-  InstanceId:
-    Description: InstanceId of the newly created EC2 instance
+  SNSTopic:
+    Description: SNS Topic
     Export:
-      Name: !Sub ${AWS::StackName}-EC2Instance
-    Value: !Ref EC2Instance
+      Name: !Sub ${AWS::StackName}-SNSTopic
+    Value: !Ref SNSTopic
 
-
+  SNSTopicPolicy:
+    Description: SNS Topic Policy
+    Export:
+      Name: !Sub ${AWS::StackName}-SNSTopicPolicy
+    Value: !Ref SNSTopicPolicy
   
-
+  UserTokenTable:
+    Description: DynamoDB Track User Token table
+    Export:
+      Name: !Sub ${AWS::StackName}-UserTokenTable
+    Value: !Ref UserTokenTable
   
+  EmailTable:
+    Description: DynamoDB Track User Email table
+    Export:
+      Name: !Sub ${AWS::StackName}-EmailTable
+    Value: !Ref EmailTable
+  
+  LambdaPermission:
+    Description: SNS Permission
+    Export:
+      Name: !Sub ${AWS::StackName}-SNSPermission
+    Value: !Ref SNSPermission
+
+  LambdaFunctionRole:
+    Description: Lambda Function Permission for All Resources
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionRole
+    Value: !Ref LambdaFunctionRole
+  
+  LambdaFunction:
+    Description: Lambda Function
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunction
+    Value: !Ref LambdaFunction
+
+  EBSKey:
+    Description: EBS Key
+    Export:
+      Name: !Sub ${AWS::StackName}-EBSKey
+    Value: !Ref EBSKey
+
+  RDSKey:
+    Description: RDS Key
+    Export:
+      Name: !Sub ${AWS::StackName}-RDSKey
+    Value: !Ref RDSKey
